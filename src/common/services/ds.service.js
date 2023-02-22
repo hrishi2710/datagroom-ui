@@ -18,7 +18,9 @@ export const dsService = {
     getProjectsMetaData,
     getDefaultTypeFieldsAndValues,
     convertToJira,
-    addJiraRow
+    addJiraRow,
+    getWorkflowTransitionFieldsForJira,
+    changeJiraStatus,
 };
 
 const config = {};
@@ -453,6 +455,57 @@ async function addJiraRow(body) {
         if (response.ok) {
             responseJson = await response.json();
             console.log('addJiraRow: ', responseJson);
+        }
+        return responseJson;
+    } catch (e) {
+        console.log(e);
+    }
+}
+
+async function getWorkflowTransitionFieldsForJira(body) {
+    try {
+        console.log("Starting getWorkflowTransitionFieldsForJira API call: ", body);
+        let dataLen = JSON.stringify(body).length.toString();
+        let response = await fetch(`${config.apiUrl}/ds/getWorkflowTransitionFieldsForJira`, {
+            method: "post",
+            mode: 'cors',
+            cache: 'no-cache',
+            credentials: 'same-origin',
+            body: JSON.stringify(body),
+            headers: {
+                "Content-Type": "application/json",
+                "Content-Length": dataLen,
+            }
+        });
+        let responseJson = null;
+        console.log("Finished API")
+        if (response.ok) {
+            responseJson = await response.json();
+            console.log('getWorkflowTransitionFieldsForJira: ', responseJson);
+        }
+        return responseJson;
+    } catch (e) {
+        console.log(e);
+    }
+}
+
+async function changeJiraStatus(body) {
+    try {
+        console.log("Starting API call: ", body);
+        let dataLen = JSON.stringify(body).length.toString();
+        let response = await fetch(`${config.apiUrl}/ds/view/changeJiraStatus`, {
+            method: "post",
+            body: JSON.stringify(body),
+            headers: {
+                "Content-Type": "application/json",
+                "Content-Length": dataLen,
+            }
+        });
+        let responseJson = null;
+        console.log("Finished API")
+        if (response.ok) {
+            responseJson = await response.json();
+            console.log('changeJiraStatus: ', responseJson);
         }
         return responseJson;
     } catch (e) {

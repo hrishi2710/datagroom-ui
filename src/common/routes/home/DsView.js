@@ -28,6 +28,7 @@ import "reveal.js/dist/reveal.css";
 //import "reveal.js/dist/theme/white.css";
 import './rjs_white.css';
 import JiraForm from './jiraForm.js'
+import WorkflowTransitionForm from './workflowTransitionForm.js'
 import Reveal from 'reveal.js';
 import Markdown from 'reveal.js/plugin/markdown/markdown.esm.js';
 import RevealHighlight from 'reveal.js/plugin/highlight/highlight.esm'
@@ -147,6 +148,10 @@ class DsView extends Component {
             Type: "Epic",
         }
 
+        this.workFlowData = {
+            selectedTransition: "None",
+        }
+
         this.applyHtmlLinkAndBadgeClickHandlers = this.applyHtmlLinkAndBadgeClickHandlers.bind(this);
         this.renderComplete = this.renderComplete.bind(this);
         this.cellEditing = this.cellEditing.bind(this);
@@ -220,6 +225,10 @@ class DsView extends Component {
         this.submitJiraFormChange = this.submitJiraFormChange.bind(this)
 
         this.addJiraRow = this.addJiraRow.bind(this)
+
+        this.changeJiraStatus = this.changeJiraStatus.bind(this)
+        this.handleJiraStatusChange = this.handleJiraStatusChange.bind(this)
+        this.submitJiraStatusChange = this.submitJiraStatusChange.bind(this)
     }
     componentDidMount () {
         const { dispatch, match, user, dsHome } = this.props;
@@ -1970,6 +1979,200 @@ class DsView extends Component {
 
     /**End add a jira issue */
 
+    /**Start change jira status */
+    async changeJiraStatus(e, cell) {
+        let self = this
+        const { match, dsHome, user } = this.props;
+        let dsName = match.params.dsName;
+        let dsView = match.params.dsView;
+        let username = user.user;
+        let jiraConfig = dsHome.dsViews[dsView].jiraConfig;
+        let jiraAgileConfig = dsHome.dsViews[dsView].jiraAgileConfig;
+        if (!jiraAgileConfig || !jiraAgileConfig.jira) {
+            this.setState({
+                modalTitle: "Change JIRA status",
+                modalQuestion: `JIRA_AGILE config is disabled. Enable it to change JIRA status`,
+                modalOk: "Dismiss",
+                modalCallback: (confirmed) => { self.setState({ showModal: false, modalQuestion: '', modalStatus: '' }) },
+                showModal: true
+            })
+            return
+        }
+        let data = cell.getRow().getData()
+        if (!this.isJiraAgileRow(data, jiraConfig, jiraAgileConfig)) {
+            this.setState({
+                modalTitle: "Change JIRA status",
+                modalQuestion: `Not a JIRA AGILE row. Status change support is only for JIRA AGILE row.`,
+                modalOk: "Dismiss",
+                modalCallback: (confirmed) => { self.setState({ showModal: false, modalQuestion: '', modalStatus: '' }) },
+                showModal: true
+            })
+            return
+        }
+        let jiraId = this.getJiraId(data, jiraConfig, jiraAgileConfig)
+        if (jiraId == "") {
+            this.setState({
+                modalTitle: "Change JIRA status",
+                modalQuestion: `Unable to determine Jira Id of the row.`,
+                modalOk: "Dismiss",
+                modalCallback: (confirmed) => { self.setState({ showModal: false, modalQuestion: '', modalStatus: '' }) },
+                showModal: true
+            })
+            return
+        }
+        let workflowFieldsForJira = await dsService.getWorkflowTransitionFieldsForJira({ dsName, dsView, username, jiraId })
+        if (!workflowFieldsForJira || Object.keys(workflowFieldsForJira).length == 0) {
+            this.setState({
+                modalTitle: "Change JIRA status",
+                modalQuestion: `Unable to fetch workflowfields transition metaData.`,
+                modalOk: "Dismiss",
+                modalCallback: (confirmed) => { self.setState({ showModal: false, modalQuestion: '', modalStatus: '' }) },
+                showModal: true
+            })
+            return
+        }
+        let workFlowData = JSON.parse(JSON.stringify(workflowFieldsForJira));
+        this.workFlowData = {
+            ...this.workFlowData,
+            ...workFlowData
+        }
+        let _id = cell.getRow().getData()['_id'];
+        let selectorObj = {};
+        selectorObj["_id"] = _id;
+        for (let i = 0; i < dsHome.dsViews[dsView].keys.length; i++) {
+            let key = dsHome.dsViews[dsView].keys[i];
+            selectorObj[key] = cell.getRow().getData()[key];
+        }
+        this.setState({
+            modalTitle: "Jira status change:- ",
+            modalOk: "Change Status",
+            modalQuestion: <WorkflowTransitionForm formData={this.workFlowData} handleChange={this.handleJiraStatusChange} />,
+            modalCallback: (confirmed) => {
+                self.submitJiraFormChange(confirmed, _id, selectorObj)
+            },
+            showModal: !this.state.showModal,
+            toggleModalOnClose: false,
+        })
+    }
+
+    handleJiraStatusChange(obj) {
+        let key = Object.keys(obj)[0]
+        if (key && key === "selectedTransition") {
+            this.workFlowData = {
+                ...this.workFlowData,
+                [key]: obj[key]
+            }
+        } else {
+            this.workFlowData = {
+                ...this.workFlowData,
+                [this.workFlowData.selectedTransition]: {
+                    ...this.workFlowData[this.workFlowData.selectedTransition],
+                    ...obj
+                }
+            }
+        }
+    }
+
+    async submitJiraStatusChange(confirmed, _id, selectorObj) {
+        if (confirmed) {
+            const { dispatch, match, user, dsHome } = this.props;
+            let dsName = match.params.dsName;
+            let dsView = match.params.dsView;
+            let username = user.user;
+            let jiraConfig = dsHome.dsViews[dsView].jiraConfig;
+            let jiraAgileConfig = dsHome.dsViews[dsView].jiraAgileConfig;
+            let workFlowData = JSON.parse(JSON.stringify(this.workFlowData));
+            //reset the jiraFormData value
+            let response = await dsService.changeJiraStatus({ dsName, dsView, username, selectorObj, workFlowData, jiraConfig, jiraAgileConfig })
+            let secondaryModalStatus = this.state.modalStatus;
+            let modalStatus = this.state.modalStatus;
+            let showSecondaryModal = false
+            if (response) {
+                if (response.status == 'success') {
+                    let fullUpdatedRec = response.record
+                    let update = {
+                        _id: _id,
+                        ...fullUpdatedRec
+                    }
+                    this.ref.table.updateData([update]);
+                    modalStatus += `Update <b style="color:green">Jira status updated done</b> <br/>`
+                    let modalQuestion = modalStatus ? <div dangerouslySetInnerHTML={{ __html: modalStatus }} /> : <div dangerouslySetInnerHTML={{ __html: '<b style="color:green">Update success</b>' }} />;
+                    this.setState({
+                        modalTitle: "Change JIRA Status",
+                        modalQuestion: modalQuestion,
+                        modalStatus: modalStatus,
+                        modalOk: "Dismiss",
+                        modalCallback: (confirmed) => { this.setState({ showModal: false, modalQuestion: '', modalStatus: '', grayOutModalButtons: false }) },
+                        showModal: true,
+                        toggleModalOnClose: true,
+                        grayOutModalButtons: false
+                    });
+                    this.workFlowData = {
+                        selectedTransition: "None",
+                    }
+                } else {
+                    secondaryModalStatus += `Update <b style="color:red">failed</b>, (error: ${response.error})<br/><br/>`
+                    showSecondaryModal = true;
+                }
+            } else {
+                secondaryModalStatus += `Update <b style="color:red">failed</b><br/><br/>`
+                showSecondaryModal = true;
+            }
+            if (showSecondaryModal /* && !this.state.showModal*/) {
+                let self = this;
+                let secondaryModalQuestion = secondaryModalStatus ? <div dangerouslySetInnerHTML={{ __html: secondaryModalStatus }} /> : <div dangerouslySetInnerHTML={{ __html: '<b style="color:green">Convert Success</b>' }} />;
+                this.setState({
+                    secondaryModalTitle: "Convert Status",
+                    secondaryModalQuestion: secondaryModalQuestion,
+                    secondaryModalStatus: secondaryModalStatus,
+                    secondaryModalOk: "Dismiss",
+                    secondaryModalCallback: (confirmed) => { self.setState({ showSecondaryModal: false, secondaryModalQuestion: '', secondaryModalStatus: '', grayOutModalButtons: false }) },
+                    showSecondaryModal: true,
+                });
+            }
+        } else {
+            this.setState({ showModal: !this.state.showModal, toggleModalOnClose: true });
+        }
+    }
+
+    // getJiraId(data, jiraConfig, jiraAgileConfig) {
+    //     let fieldMapping = null
+    //     if (jiraConfig && jiraConfig.jira) {
+    //         fieldMapping = jiraConfig.jiraFieldMapping
+    //     }
+    //     if (jiraAgileConfig && jiraAgileConfig.jira) {
+    //         fieldMapping = {
+    //             ...fieldMapping,
+    //             ...jiraAgileConfig.jiraFieldMapping
+    //         }
+    //     }
+    //     if (!fieldMapping) return ""
+    //     let key = data[fieldMapping['key']]
+    //     if (!key) return ""
+    //     let match = key.match(/\[(.*?)\]/);
+    //     if (!match || match.length < 2) return ""
+    //     return match[1]
+    // }
+
+    isJiraAgileRow(data, jiraConfig, jiraAgileConfig) {
+        let fieldMapping = null
+        if (jiraConfig && jiraConfig.jira) {
+            fieldMapping = jiraConfig.jiraFieldMapping
+        }
+        if (jiraAgileConfig && jiraAgileConfig.jira) {
+            fieldMapping = {
+                ...fieldMapping,
+                ...jiraAgileConfig.jiraFieldMapping
+            }
+        }
+        if (!fieldMapping) return false
+        let key = data[fieldMapping['key']]
+        if (!key) return false
+        if (key.match(/JIRA_AGILE/)) return true
+        return false
+    }
+    /**End change jira status */
+
     handleColorPickerClose () {
         this.setState({ showColorPicker: false });
     }
@@ -2108,7 +2311,11 @@ class DsView extends Component {
                 action: function (e, cell) {
                     me.addJiraRow(e, cell, 'Sub-task')
                 }
-            }
+            },
+            {
+                label: "Change JIRA status...",
+                action: this.changeJiraStatus
+            },
         ];        
         let columns = [];
         for (let i = 0; i < dsHome.dsViews[dsView].columnAttrs.length; i++) {
